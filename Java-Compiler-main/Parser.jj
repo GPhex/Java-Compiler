@@ -1,0 +1,132 @@
+PARSER_BEGIN(Parser)
+
+import ast.*;
+import ast.binary.*;
+import ast.special.*;
+import ast.unary.*;
+import util.Pair;
+
+import java.util.LinkedList;
+import java.util.List;
+
+public class Parser { }
+PARSER_END(Parser)
+
+SKIP : {
+  " "
+| "\t"
+| "\r"
+| "\n"
+}
+
+// Operation tokens
+TOKEN : {
+    <ADD: "+">
+  | <SUB: "-">
+  | <DIV: "/">
+  | <MOD: "%">
+  | <MULT: "*">
+  | <LPAR: "(">
+  | <RPAR: ")">
+  | <ASSIGN: "=">
+  | <EXP_DEL: ";">
+}
+
+// Reserved keywords tokens
+TOKEN : {
+    <DEF: "def">
+  | <IN: "in">
+  | <END: "end">
+}
+
+// Literal definition tokens
+TOKEN : {
+    <INTEGER_LITERAL: (["0"-"9"])+>
+}
+
+// Identifier variable tokens
+TOKEN : {
+    <IDENTIFIER: <LETTER> (<LETTER> | <DIGIT>)*>
+  | <#LETTER: ["_", "A"-"Z", "a"-"z"]>
+  | <#DIGIT: ["0"-"9"]>
+}
+
+ASTNode Start():
+{ASTNode root;}
+{
+    root = TranslationUnit() <EXP_DEL>
+    {return root;}
+}
+
+ASTNode TranslationUnit():
+{ASTNode tu_node;}
+{
+    (tu_node = AdditiveExpression() | tu_node = Declaration())
+    {return tu_node;}
+}
+
+ASTNode AdditiveExpression():
+{Token op;
+ASTNode lhs, rhs;}
+{
+    lhs = MultiplicativeExpression() (
+        (op = <ADD> | op = <SUB>)
+        rhs = MultiplicativeExpression()
+        {lhs = op.kind == ADD ? new ASTAddNode(lhs, rhs) : new ASTSubNode(lhs, rhs);}
+    )*
+    {return lhs;}
+}
+
+ASTNode MultiplicativeExpression():
+{Token op;
+ASTNode lhs, rhs;}
+{
+    lhs = UnaryExpression() (
+        (op = <MULT> | op = <DIV> | op = <MOD>)
+        rhs = UnaryExpression()
+{switch(op.kind) {
+    case MULT: lhs = new ASTMultNode(lhs, rhs); break;
+    case DIV : lhs = new ASTDivNode(lhs, rhs); break;
+    case MOD : lhs = new ASTModNode(lhs, rhs); break;
+}}
+    )*
+    {return lhs;}
+}
+
+ASTNode UnaryExpression():
+{ASTNode exp;}
+{
+    (<SUB> exp = UnaryExpression() {exp = new ASTNegNode(exp);}
+   | <ADD> exp = UnaryExpression() {exp = new ASTPosNode(exp);}
+   | exp = PrimaryExpression())
+   {return exp;}
+}
+
+ASTNode PrimaryExpression():
+{Token val;
+ASTNode exp;}
+{
+    (val = <INTEGER_LITERAL> {exp = new ASTNumNode(Integer.parseInt(val.image));}
+   | val = <IDENTIFIER> {exp = new ASTVarRefNode(val.image);}
+   | <LPAR> exp = TranslationUnit() <RPAR>)
+   {return exp;}
+}
+
+ASTNode Declaration():
+{ASTNode scope;
+Pair<String, ASTNode> curAssign;
+List<Pair<String, ASTNode>> assignments = new LinkedList();}
+{
+    <DEF> curAssign = AssignmentExpression() {assignments.add(curAssign);}
+    ((",")? curAssign = AssignmentExpression() {assignments.add(curAssign);})*
+    <IN> scope = TranslationUnit() <END>
+    {return new ASTScopeNode(assignments, scope);}
+}
+
+Pair<String, ASTNode> AssignmentExpression():
+{Token symbol;
+ASTNode value;}
+{
+    symbol = <IDENTIFIER> <ASSIGN> value = TranslationUnit()
+    {return new Pair<String, ASTNode>(symbol.image, value);}
+}
