@@ -1,132 +1,397 @@
+options {
+    STATIC = false;
+}
+
 PARSER_BEGIN(Parser)
 
-import ast.*;
-import ast.binary.*;
-import ast.special.*;
-import ast.unary.*;
+import ast.JasvaASTNode;
+import ast.arithmetic.*;
+import ast.block.*;
+import ast.logical.*;
+import ast.relational.*;
+import ast.specific.*;
+import ast.types.*;
+import ast.variable.*;
+
+import compilation.*;
+import codeGeneration.environment.LinkedEnvironment;
+import codeGeneration.programGeneration.*;
+import compilation.fileGeneration.CachedProgramGenerator;
+import types.*;
 import util.Pair;
+import values.Value;
 
-import java.util.LinkedList;
 import java.util.List;
+import java.util.LinkedList;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 
-public class Parser { }
+public class Parser {
+
+    private static final String EXTENSION = ".jsv";
+    private static final String INTERPRET_FLAG = "-i";
+    private static final String FILE_FLAG = "-f";
+    private static final String AST_FLAG = "-ast";
+
+    public static void main(String[] args) {
+        try {
+            boolean interpretFlag = false;
+            boolean printASTFlag = false;
+            String fileName = null;
+            InputStream readFrom = System.in;
+
+            int i = 0;
+            while (i < args.length & i < 4) {
+                switch (args[i++]) {
+                    case INTERPRET_FLAG:
+                        interpretFlag = true;
+                        break;
+                    case AST_FLAG:
+                        printASTFlag = true;
+                        break;
+                    case FILE_FLAG:
+                        if (i < args.length && (fileName = args[i++]).endsWith(EXTENSION))
+                            readFrom = new FileInputStream(fileName);
+                        else {
+                            System.err.println("-f requires a valid " + EXTENSION +  " filename");
+                            throw new IllegalStateException();
+                        }
+                        break;
+                    default:
+                        throw new IllegalStateException();
+                }
+            }
+            if (readFrom == System.in) interpretFlag = true;
+            if(printASTFlag)
+                System.out.println("Printing Abstract Syntax Tree");
+            if(interpretFlag)
+                Parser.interpretMode(readFrom, printASTFlag);
+            else
+                Parser.compilerMode(fileName, readFrom, printASTFlag);
+
+        } catch (IOException e) {
+            System.err.println("Could not load the file.");
+            printHelp();
+        } catch (IllegalStateException e) {
+            System.err.println("Bad argument.");
+            printHelp();
+        }
+    }
+
+    private static void interpretMode(final InputStream readFrom, final boolean printAST) {
+        do {
+            Parser parser = new Parser(readFrom);
+            try {
+                JasvaASTNode node = parser.Start();
+                if(printAST) node.printNode("", "");
+                System.out.println("Output> " + node.evaluate(new LinkedEnvironment<Value<?>>(null)));
+            }
+            catch (ParseException e) {
+                System.err.println("Syntax error!");
+            }
+            catch (Exception e) {
+                System.err.println(e.getMessage());
+            }
+        } while(readFrom == System.in);
+    }
+
+    private static void compilerMode(final String fileName, final InputStream readFrom, final boolean printAST) {
+        final String outFileName = fileName.substring(fileName.lastIndexOf("/") + 1, fileName.lastIndexOf("."));
+        Parser parser = new Parser(readFrom);
+        try {
+            JasvaASTNode node = parser.Start();
+            node.typeCheck(new LinkedEnvironment<Type>(null));
+            ProgramGenerator<JasminCompiler> programGenerator = new CachedProgramGenerator(outFileName, "j");
+            CompiledClass<JasminCompiler> mainClass = programGenerator.getClass(outFileName);
+            MethodBuilder<JasminCompiler> mainMethod = mainClass.addMethod("main", BaseTypes.VOID, Modifiers.PUBLIC, Modifiers.STATIC);
+            mainMethod.addParam("args", CompilerType.array(BaseTypes.STRING));
+            JasminCompiler compiler = mainMethod.getCompiler();
+            compiler.startStaticLinker();
+            if(printAST)
+                node.printNode("", "");
+            System.out.println("Compiling " + fileName);
+            node.compile(mainClass, compiler, new LinkedEnvironment<Pair<Integer, String>>(null));
+            programGenerator.generateFiles();
+        }
+        catch (ParseException e) {
+            System.err.println("Syntax error!");
+        }
+        catch (IOException e) {
+            System.err.println("Could not generate files");
+        }
+        catch(Exception e) {
+            System.err.println(e.getMessage());
+        }
+    }
+
+    private static void printHelp() {
+        System.out.println("Usage: java -jar Jasva.jar [-i] [-f file] [-ast]");
+        System.out.println("-f file: compiles the provided file");
+        System.out.println("-i: force interpreter mode. If a valid -f flag is present, interprets given file and exits");
+        System.out.println("-ast: prints the syntax tree associated with the program");
+    }
+}
+
 PARSER_END(Parser)
 
-SKIP : {
-  " "
-| "\t"
-| "\r"
-| "\n"
+SKIP: {
+    " "
+  | "\n"
+  | "\t"
+  | "\r"
 }
 
-// Operation tokens
-TOKEN : {
-    <ADD: "+">
-  | <SUB: "-">
-  | <DIV: "/">
-  | <MOD: "%">
-  | <MULT: "*">
-  | <LPAR: "(">
-  | <RPAR: ")">
-  | <ASSIGN: "=">
-  | <EXP_DEL: ";">
-}
-
-// Reserved keywords tokens
-TOKEN : {
-    <DEF: "def">
-  | <IN: "in">
-  | <END: "end">
-}
-
-// Literal definition tokens
-TOKEN : {
-    <INTEGER_LITERAL: (["0"-"9"])+>
-}
-
-// Identifier variable tokens
-TOKEN : {
-    <IDENTIFIER: <LETTER> (<LETTER> | <DIGIT>)*>
-  | <#LETTER: ["_", "A"-"Z", "a"-"z"]>
-  | <#DIGIT: ["0"-"9"]>
-}
-
-ASTNode Start():
-{ASTNode root;}
+// Reseved keywords
+TOKEN:
 {
-    root = TranslationUnit() <EXP_DEL>
-    {return root;}
+  <DEF: "def"    >
+| <IN : "in"     >
+| <IF : "if"     >
+| <THN: "then"   >
+| <ELS: "else"   >
+| <WHL: "while"  >
+| <DO : "do"     >
+| <NEW: "new"    >
+| <END: "end"    >
+| <INT: "int"    >
+| <BOL: "bool"   >
+| <REF: "ref"    >
+| <PRT: "print"  >
+| <PRL: "println">
 }
 
-ASTNode TranslationUnit():
-{ASTNode tu_node;}
+// Operator tokens
+TOKEN:
 {
-    (tu_node = AdditiveExpression() | tu_node = Declaration())
-    {return tu_node;}
+  <MO_POS: "+" >
+| <MO_NEG: "-" >
+| <MO_PRO: "*" >
+| <MO_DIV: "/" >
+| <MO_MOD: "%" >
+| <DEFINE: "=" >
+| <ASSIGN: ":=">
+| <DEREF : "!" >
+| <CMP_EQ: "==">
+| <CMP_LT: "<" >
+| <CMP_LE: "<=">
+| <CMP_GT: ">" >
+| <CMP_GE: ">=">
+| <LO_OR : "||">
+| <LO_AND: "&&">
+| <LO_NOT: "~" >
 }
 
-ASTNode AdditiveExpression():
-{Token op;
-ASTNode lhs, rhs;}
+// Misc tokens
+TOKEN:
 {
-    lhs = MultiplicativeExpression() (
-        (op = <ADD> | op = <SUB>)
-        rhs = MultiplicativeExpression()
-        {lhs = op.kind == ADD ? new ASTAddNode(lhs, rhs) : new ASTSubNode(lhs, rhs);}
-    )*
-    {return lhs;}
+  <TERM : ";;">
+| <DLMT : ";" >
+| <COM  : "," >
+| <L_PAR: "(" >
+| <R_PAR: ")" >
+| <COLN : ":" >
 }
 
-ASTNode MultiplicativeExpression():
-{Token op;
-ASTNode lhs, rhs;}
+// Literals
+TOKEN:
 {
-    lhs = UnaryExpression() (
-        (op = <MULT> | op = <DIV> | op = <MOD>)
-        rhs = UnaryExpression()
+  <INTEGER_LITERAL: <DECIMAL_LITERAL> (["l", "L"])? >
+| <#DECIMAL_LITERAL: (["0"-"9"])+>
+| <BOOLEAN_LITERAL: "true"|"false">
+}
+
+// Identifiers
+TOKEN:
+{
+  <IDENTIFIER: <LETTER> (<DECIMAL> | <LETTER>)*>
+| <#LETTER: ["a"-"z","A"-"Z","_","$"]>
+| <#DECIMAL: ["0"-"9"]>
+}
+
+JasvaASTNode Start():
+{JasvaASTNode statements;}
+{
+    statements = CompoundStatement() <TERM>
+    { return statements; }
+}
+
+JasvaASTNode CompoundStatement():
+{JasvaASTNode leftUnit, rightUnit;}
+{
+    leftUnit = TranslationUnit() (<DLMT> rightUnit = TranslationUnit()
+    {leftUnit = new ASTCompoundNode(leftUnit, rightUnit);})*
+    { return leftUnit; }
+}
+
+JasvaASTNode TranslationUnit():
+{JasvaASTNode leftExp, rightExp;}
+{
+    leftExp = LogicORExpression()
+    (LOOKAHEAD(2) <ASSIGN> rightExp = LogicORExpression() {leftExp = new ASTAssignNode(leftExp, rightExp);})?
+    { return leftExp; }
+}
+
+JasvaASTNode LogicORExpression():
+{JasvaASTNode l_exp, r_exp;}
+{
+  l_exp = LogicANDExpression() (LOOKAHEAD(2) <LO_OR> r_exp = LogicANDExpression() {l_exp = new ASTOrNode(l_exp, r_exp);})*
+  {return l_exp;}
+}
+
+JasvaASTNode LogicANDExpression():
+{JasvaASTNode l_exp, r_exp;}
+{
+  l_exp = ComparisonExpression() (LOOKAHEAD(2) <LO_AND> r_exp = ComparisonExpression() {l_exp = new ASTAndNode(l_exp, r_exp);})*
+  {return l_exp;}
+}
+
+JasvaASTNode ComparisonExpression():
+{JasvaASTNode l_exp, r_exp;
+Token op;}
+{
+  l_exp = RelationalExpression() [LOOKAHEAD(2) <CMP_EQ> r_exp = RelationalExpression()
+{l_exp = new ASTEqualsNode(l_exp, r_exp);}]
+  {return l_exp;}
+}
+
+JasvaASTNode RelationalExpression():
+{JasvaASTNode l_exp, r_exp;
+Token op;}
+{
+  l_exp = AdditiveExpression() [
+  LOOKAHEAD(2)
+   ((op = <CMP_LT> r_exp = AdditiveExpression() {l_exp = new ASTLessThanNode(l_exp, r_exp);})
+  | (op = <CMP_LE> r_exp = AdditiveExpression() {l_exp = new ASTLessEqNode(l_exp, r_exp);})
+  | (op = <CMP_GT> r_exp = AdditiveExpression() {l_exp = new ASTGreatThanNode(l_exp, r_exp);})
+  | (op = <CMP_GE> r_exp = AdditiveExpression() {l_exp = new ASTGreatEqNode(l_exp, r_exp);}))]
+  {return l_exp;}
+}
+
+JasvaASTNode AdditiveExpression():
+{JasvaASTNode l_exp, r_exp;
+Token op;}
+{
+  l_exp = MultiplicativeExpression() (LOOKAHEAD(2) (op = <MO_POS> | op = <MO_NEG>) r_exp = MultiplicativeExpression()
 {switch(op.kind) {
-    case MULT: lhs = new ASTMultNode(lhs, rhs); break;
-    case DIV : lhs = new ASTDivNode(lhs, rhs); break;
-    case MOD : lhs = new ASTModNode(lhs, rhs); break;
-}}
-    )*
-    {return lhs;}
+  case MO_POS: l_exp = new ASTAddNode(l_exp, r_exp); break;
+  case MO_NEG: l_exp = new ASTSubNode(l_exp, r_exp); break;
+}
+})*
+  {return l_exp;}
 }
 
-ASTNode UnaryExpression():
-{ASTNode exp;}
+JasvaASTNode MultiplicativeExpression():
+{JasvaASTNode l_exp, r_exp;
+Token op;}
 {
-    (<SUB> exp = UnaryExpression() {exp = new ASTNegNode(exp);}
-   | <ADD> exp = UnaryExpression() {exp = new ASTPosNode(exp);}
-   | exp = PrimaryExpression())
-   {return exp;}
+  l_exp = UnaryExpression() (LOOKAHEAD(2) (op = <MO_PRO> | op = <MO_DIV> | op = <MO_MOD>) r_exp = UnaryExpression()
+{switch(op.kind) {
+  case MO_PRO: l_exp = new ASTMulNode(l_exp, r_exp); break;
+  case MO_DIV: l_exp = new ASTDivNode(l_exp, r_exp); break;
+  case MO_MOD: l_exp = new ASTModNode(l_exp, r_exp); break;
+}
+})*
+  {return l_exp;}
 }
 
-ASTNode PrimaryExpression():
-{Token val;
-ASTNode exp;}
+JasvaASTNode UnaryExpression():
+{JasvaASTNode exp;}
 {
-    (val = <INTEGER_LITERAL> {exp = new ASTNumNode(Integer.parseInt(val.image));}
-   | val = <IDENTIFIER> {exp = new ASTVarRefNode(val.image);}
-   | <LPAR> exp = TranslationUnit() <RPAR>)
-   {return exp;}
+  ( <MO_NEG> exp = UnaryExpression() {exp = new ASTNegNode(exp);}
+  | <MO_POS> exp = UnaryExpression() {exp = new ASTPosNode(exp);}
+  | <LO_NOT> exp = UnaryExpression() {exp = new ASTNotNode(exp);}
+  | <L_PAR> exp = CompoundStatement() <R_PAR>
+  | exp = PrimaryExpression())
+  {return exp;}
 }
 
-ASTNode Declaration():
-{ASTNode scope;
-Pair<String, ASTNode> curAssign;
-List<Pair<String, ASTNode>> assignments = new LinkedList();}
+JasvaASTNode PrimaryExpression():
+{JasvaASTNode exp;}
 {
-    <DEF> curAssign = AssignmentExpression() {assignments.add(curAssign);}
-    ((",")? curAssign = AssignmentExpression() {assignments.add(curAssign);})*
-    <IN> scope = TranslationUnit() <END>
-    {return new ASTScopeNode(assignments, scope);}
+  ( exp = Literal()
+  | exp = Var()
+  | exp = ScopeExpression()
+  | exp = ReferenceExpression()
+  | exp = BranchingExpression()
+  | exp = IterationExpression()
+  | exp = PrintExpression())
+  {return exp;}
 }
 
-Pair<String, ASTNode> AssignmentExpression():
-{Token symbol;
-ASTNode value;}
+JasvaASTNode Literal():
+{Token value;}
 {
-    symbol = <IDENTIFIER> <ASSIGN> value = TranslationUnit()
-    {return new Pair<String, ASTNode>(symbol.image, value);}
+    value = <INTEGER_LITERAL> { return new ASTIntNode(Integer.parseInt(value.image));}
+  | value = <BOOLEAN_LITERAL> { return new ASTBoolNode(Boolean.parseBoolean(value.image));}
+}
+
+JasvaASTNode Var():
+{Token value;
+JasvaASTNode node;}
+{
+    value = <IDENTIFIER> {node = new ASTIdNode(value.image);}
+    { return node; }
+}
+
+JasvaASTNode ScopeExpression():
+{List<ASTDefineNode> defines;
+JasvaASTNode scope;}
+{
+  <DEF> defines = DefinitionList() <IN> scope = CompoundStatement() <END>
+  {return new ASTLetNode(defines, scope);}
+}
+
+List<ASTDefineNode> DefinitionList():
+{List<ASTDefineNode> defs = new LinkedList<ASTDefineNode>();
+ASTDefineNode cur_def;}
+{
+  cur_def = Definition() {defs.add(cur_def);} ([<COM>] cur_def = Definition() {defs.add(cur_def);})*
+  {return defs;}
+}
+
+ASTDefineNode Definition():
+{Token varID;
+Type type;
+JasvaASTNode varVal;}
+{
+  varID = <IDENTIFIER> <COLN> type = ExpType() <DEFINE> varVal = CompoundStatement()
+  {return new ASTDefineNode(varID.image, type, varVal);}
+}
+
+Type ExpType():
+{Type innerType;}
+{
+    <INT> { return new IntType(); }
+  | <BOL> { return new BoolType(); }
+  | <REF> innerType = ExpType() { return new RefType(innerType); }
+}
+
+JasvaASTNode ReferenceExpression():
+{JasvaASTNode exp;}
+{
+  ( <NEW> exp = PrimaryExpression() {exp = new ASTNewRefNode(exp);}
+  | <DEREF> exp = PrimaryExpression() {exp = new ASTDerefNode(exp);})
+  {return exp;}
+}
+
+JasvaASTNode BranchingExpression():
+{JasvaASTNode cond, t_block, f_block = null;}
+{
+  <IF> cond = CompoundStatement() <THN> t_block = CompoundStatement() [<ELS> f_block = CompoundStatement()] <END>
+  {return new ASTIfNode(cond, t_block, f_block);}
+}
+
+JasvaASTNode IterationExpression():
+{JasvaASTNode cond, block;}
+{
+  <WHL> cond = CompoundStatement() <DO> block = CompoundStatement() <END>
+  {return new ASTWhileNode(cond, block);}
+}
+
+JasvaASTNode PrintExpression():
+{JasvaASTNode node = null;}
+{
+   (<PRL> [LOOKAHEAD(1) node = TranslationUnit()] { return new ASTPrintNode(node, true);})
+ | (<PRT> node = TranslationUnit() { return new ASTPrintNode(node, false);})
 }

@@ -1,9 +1,13 @@
 package codeGeneration;
 
-public interface Instruction {
+import java.util.function.Predicate;
 
-    String getFormattedInstruction(final Object... args);
+public interface Instruction<Alias, IS extends Enum<IS> & Instruction<Alias, IS>> {
 
-    int getStackImpact();
+    FormattedInstruction<Alias, IS> instance(final Object... args);
+
+    Alias getCompilerFormattingAlias();
+
+    int getEvaluationStackImpact();
 
 }

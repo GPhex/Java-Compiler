@@ -1,14 +1,21 @@
 package ast;
 
-import codeGeneration.IntermediateCodeGenerator;
+import codeGeneration.programGeneration.CompiledClass;
+import codeGeneration.Compiler;
 import codeGeneration.environment.Environment;
+import compilation.TypeException;
+import types.Type;
 import util.Pair;
+import values.Value;
 
-public interface ASTNode {
+public interface ASTNode<C extends Compiler<?, ?, ?>> {
 
-    int evaluate(final Environment<Integer> variableDeclarations);
+    Value<?> evaluate(final Environment<Value<?>> symbolTable);
 
-    void compile(final Environment<Pair<Integer, String>> variableLinker,
-                 final IntermediateCodeGenerator builder);
+    void compile(final CompiledClass<C> classContext,
+                 final C compiler,
+                 final Environment<Pair<Integer, String>> symbolLinker);
+
+    Type typeCheck(final Environment<Type> symbolTable) throws TypeException;
 
 }

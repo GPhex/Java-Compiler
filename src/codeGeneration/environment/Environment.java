@@ -1,15 +1,15 @@
 package codeGeneration.environment;
 
-public interface Environment<Value> {
+public interface Environment<Storage> {
 
-    Environment<Value> beginScope();
+    Environment<Storage> beginScope();
 
-    Environment<Value> endScope();
+    Environment<Storage> endScope();
 
-    int getDepth();
+    int depth();
 
-    void associate(final String key,
-                   final Value value) throws DuplicateKeyException;
+    void associate(final String id,
+                   final Storage value) throws DuplicateIdentifierException;
 
-    Value find(final String key) throws UnknownKeyException;
+    Storage find(final String id) throws UnboundIdentifierException;
 }
